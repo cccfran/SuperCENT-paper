@@ -1,0 +1,829 @@
+---
+title: "SuperCENT Simulation"
+author: "Junhui Cai, Dan Yang, Wu Zhu, Haipeng Shen, Linda Zhao"
+output: 
+  pdf_document:
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(data.table, matrixStats, dplyr, ggplot2, ggpubr,
+               grid, gridExtra, gtable, latex2exp, facetscales)
+
+source("utils_sim.R")
+
+sim_setup <- NULL
+fig_width <- 12
+fig_height <- 6
+
+knitr::opts_chunk$set(echo = F, fig.height = fig_height, fig.width = fig_width)
+```
+
+This file is produced by `SuperCENT_simulation.Rmd` which contains both codes to reproduce the simulation results in "Network Regression and Supervised Centrality Estimation" and the descriptions and instructions of the code chunks.
+To reproduce this report, `Knit` this file in RStudio.
+One can set `echo = T` for the each chunk or globally `knitr::opts_chunk$set(echo = T)` to show the code in the report.
+
+
+# Simulation
+
+The simulations were run on the Sun Grid Engine (SGE) on Red Hat Enterprise Linux. 
+The main run file is `confint.R` with utility functions in `utils_sim.R`. 
+The setup of parameters $n, d, \beta_u, \beta_v, \beta_x$ therein is set using the `optparse` package
+and is specified in `option_list` with descriptions for each options.
+
+To run different settings on SGE, specify the parameters grid in `run_confint.sh` and run `qsub run_confint.sh` in the `code` folder.
+It will write a summary log in `../output/<job-name>_<job-id>.log` and submit multiple jobs each with different setting with the results saved in `../hpcc_output/confint_<job-id>`.
+To combine the simulation results, run `Rscript reduce_cv.R <job-id>` where `job-id` is the job-id of the SGE. 
+If one does not use SGE, run `Rscript confint.R --help` to print out a brief summary of the options and specify the settings accordingly. For example, `Rscript confint.R --betau 4` to set $\beta_u = 2^4$.
+
+
+# Toy experiment
+
+```{r}
+params <- NULL
+params$job_id <- c(1745349)
+params$job_name <- "confint"
+
+sim_setup <- read_setup(params = params)
+ret <- read_output(params = params)
+
+ret <- ret[log2(epsa) >= 1]
+epsa_sel <- seq(1, 5, .5)
+sim_setup$epsas <- sim_setup$epsas[sim_setup$epsas %in% epsa_sel]
+
+betavv <- 1
+
+fig_width <- 8
+fig_height <- 12
+```
+
+## Figure 1
+
+The following chunk produces the toy experiment in the introduction.
+
+```{r}
+epsyy <- -2
+
+methods <- c("ols", "lr_oracle")
+
+ret[, sinu := sqrt(u^2)  ] 
+p1 <- plot_line_mean(ret[betav == 1 & betau == 16 & log2(epsy) == epsyy], 
+               methods, value = "sinu",
+               FUN = mean,
+               scale_y_transform = identity,
+               xaxis = "epsa",
+               hpanel = "epsy",
+               save = save, width = fig_width, height = fig_height,
+               # subtitle = TeX("$\\sin(angle(\\widehat{u}, u))$"),
+               title = TeX("Estimation error of hub centrality $u$"),
+               x_breaks = epsa_sel, 
+               x_lab_pre = "Network noise: "
+               # value0 = "u_0", 
+               # gray = F
+)
+
+
+ret[, bias_betau := (hbetau - betau)]
+p2 <- plot_line_mean(ret[betav == 1 & betau == 16 & log2(epsy) == epsyy], methods, 
+               value = "bias_betau",
+               FUN = mean,
+               scale_y_transform = identity,
+               xaxis = "epsa",
+               hpanel = "epsy",
+               save = save, width = fig_width, height = fig_height,
+               x_breaks = epsa_sel, 
+               title = TeX("Estimation bias of hub effect $\\beta_u$"), 
+               # subtitle = TeX("$\\widehat{\\beta}_u - \\beta_u$"),
+               x_lab_pre = "Network noise: "
+               # value0 = "u_0", 
+               # gray = F
+)
+
+methods <- c("ols", "lr_oracle_oracle")
+p3 <- plot_line_mean(ret[betav == betavv & betau == 16 & log2(epsy) == epsyy], methods, 
+               value = "cov_u",
+               FUN = mean,
+               error_bar = F, 
+               scale_y_transform = I,
+               xaxis = "epsa",
+               hpanel = "epsy",
+               save = save,
+               x_breaks = epsa_sel, 
+               # title = TeX("Coverage of $CI_{\\beta_u}$") ,
+               # title = TeX("Empirical coverage of  $CI_{\\beta_u}$") ,
+               title = TeX("Coverage probablity of $CI_{\\beta_u}$"), 
+               x_lab_pre = "Network noise: ",
+               width = fig_width, height = fig_height)
+
+p4 <- plot_line_mean(ret[betav == betavv & betau == 16 & log2(epsy) == epsyy], methods, 
+               value = "width_u",
+               FUN = median,
+               error_bar = F, 
+               scale_y_transform = I,
+               xaxis = "epsa",
+               hpanel = "epsy",
+               save = save,
+               x_breaks = epsa_sel, 
+               title = TeX("Width of $CI_{\\beta_u}$") , 
+               x_lab_pre = "Network noise: ",
+               width = fig_width, height = fig_height)
+
+prow <- cowplot::plot_grid( p1 + theme(legend.position="none"),
+           p2 + theme(legend.position="none"),
+           p3 + theme(legend.position="none"),
+           p4 + theme(legend.position="none"),
+           align = 'vh',
+           labels = c("A", "B", "C", "D"),
+           hjust = -4,
+           nrow = 2
+           )
+prow
+# extract the legend from one of the plots
+# (clearly the whole thing only makes sense if all plots
+# have the same legend, so we can arbitrarily pick one.)
+legend_b <- cowplot::get_legend(
+  p1 + 
+    guides(color = guide_legend(nrow = 1))+ 
+    theme(legend.position="bottom")
+)
+
+
+# add the legend underneath the row we made earlier. Give it 10% of the height
+# of one plot (via rel_heights).
+p <- cowplot::plot_grid( prow, legend_b, ncol = 1, rel_heights = c(1, .1))
+p
+
+ggsave(paste0("../output_simulation/plot/",
+              paste(sim_setup$job_id, collapse = "-"), "_epsy",
+              epsyy,
+              "_small_exmaple.pdf"), 
+       width = 12, height = 8)
+```
+
+
+# Consistent regime of two-stage
+
+This section is for the plots of the consistent regime of the two-stage procedure.
+
+```{r}
+params <- NULL
+params$job_id <- 1740961 # epsa/epsy: -6 -5 -4 -3 -2 -1 0; betau: 0, 2, 4; betav: 0; xmat: c; n: 8
+params$job_name <- "confint"
+
+sim_setup <- read_setup(params = params)
+ret <- read_output(params = params)
+
+epsy_sel <- c(-4, -2, 0)
+epsa_sel <- c(-4, -2)
+ret <- ret[log2(epsy) %in% epsy_sel & log2(epsa) %in% epsa_sel]
+sim_setup$epsys <- sim_setup$epsys[sim_setup$epsys %in% epsy_sel]
+sim_setup$epsas <- sim_setup$epsas[sim_setup$epsas %in% epsa_sel]
+
+save <- T
+
+betavv <- 1
+
+fig_width <- 12
+fig_height <- 6
+```
+
+## Calculation of theoretical results
+
+We first calculate the theoretical rate of $\hat{u}$, $\hat{v}$ and $\hat{A}$ as well as $\hat{\beta}_u$ and $\hat{\beta}_v$.
+
+```{r include=FALSE}
+theorectical_property(params = params)
+theo <- read_theorectical(params = params)
+theo <- unique(theo)
+setnames(theo, c("method", "lopt"), 
+         c("method_class", "lopt0"))
+theo[,beta0:=NULL]
+ret[, method_class := "two_stage"]
+ret[grepl("lr", method), method_class := "supercent"]
+ret <- merge(ret, theo,
+             by = c("method_class", "epsy", "epsa", "n", "betau", "betav", "d"),
+             all.x = T)
+```
+
+
+```{r}
+n <- 2^sim_setup$ns
+
+# u, v
+ret[, u := u^2]
+ret[, u_f := u_f/n]
+ret[, v := v^2]
+ret[, v_f := v_f/n]
+
+if("A2" %in% names(ret)) {
+  ret[, A_norm := A_err/A2]
+}
+if("A0_2" %in% names(ret)) {
+  ret[, A_norm := A_err/A0_2]
+}
+
+# beta
+ret[, rate_betau := (betau - betau_hat)^2/betau^2]
+ret[, rate_betav := (betav - betav_hat)^2/betav^2]
+```
+
+## Estimation property
+
+For the estimation accuracy, we compare the following procedures:
+\begin{enumerate}
+	\item \textbf{Two-stage}: the two-stage procedure as in Algorithm1;
+	\item \textbf{SuperCENT-$\lambda_0$}: SuperCENT Algorithm 2 with the optimal $\lambda_0 = n\sigma_y^2/\sigma_a^2$, where the true $\sigma_y,\sigma_a$ are used;
+	\item \textbf{SuperCENT-$\hat\lambda_0$}: SuperCENT with estimated tuning parameter $\hat\lambda_0 = n(\hat\sigma_y^{ts})^2/(\hat\sigma_a^{ts})^2$, where $(\hat\sigma_y^{ts})^2 = \frac{1}{n-p-2}\|\hat{y}^{ts}-y\|_2^2$ and $(\hat\sigma_a^{ts})^2 = \frac{1}{n^2} \|\hat{A}^{ts} - A_0\|_F^2$ are estimated from the two-stage procedure;
+	\item \textbf{SuperCENT-$\hat\lambda_{cv}$}: SuperCENT with tuning parameter $\hat\lambda_{cv}$ chosen by 10-fold {cross-validation}.
+\end{enumerate}
+
+```{r}
+methods <- c("two_stage", # two-stage
+             "lr_oracle", # SuperCENT-$\lambda_0$
+             "lr_plugin", # SuperCENT-$\hat\lambda_0$
+             "lr_cv"  # SuperCENT-$\hat\lambda_{cv}$
+)
+```
+
+### u and v
+
+The following chunks produce the plots of $l(\widehat{u}, u)$ and $l(\widehat{v}, v)$.
+
+```{r}
+plot_boxplot(ret[betav == betavv], methods, value = "u",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l(\\widehat{u}, u)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "u_0", 
+             gray = F
+             )
+```
+
+```{r}
+plot_boxplot(ret[betav == betavv], methods, value = "v",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l(\\widehat{v}, v)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "v_0", 
+             gray = F
+             )
+```
+
+### A 
+
+The following chunk produces the plot of $l(\widehat{A}, A_0)$.
+
+```{r}
+ret[, A_norm := A_err/A0_2]
+plot_boxplot(ret[betav == betavv], methods, value = "A_norm",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$ l (\\widehat{A}, A_0)$"), 
+             save = T, width = fig_width, height = fig_height,
+             value0 = "A_norm_0", 
+             gray = F
+             )
+```
+
+
+### $\beta_u$ and  $\beta_v$
+
+The following chunks produce the plots of $l (\widehat{\beta}_u, \beta_u)$ and $l (\widehat{\beta}_v, \beta_v)$.
+
+```{r}
+ret[, rate_betau := (betau - hbetau)^2/betau^2]
+scales_y <- list(
+  `-4` = scale_y_continuous(limits = c(-10, -1)),
+  `-2` = scale_y_continuous(limits = c(-9, -1)))
+
+plot_boxplot(ret[betav == betavv], methods, value = "rate_betau",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l (\\widehat{\\beta}_u, \\beta_u)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "betau_0", 
+             y_scales = scales_y,
+             gray = F)
+```
+
+```{r}
+ret[, rate_betav := (betav - hbetav)^2/betav^2]
+plot_boxplot(ret[betav == betavv], methods, value = "rate_betav",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l (\\widehat{\\beta}_v, \\beta_v)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "betav_0", 
+             y_scales = scales_y,
+             gray = F)
+```
+
+The following chunks produce the plots of $\widehat{\beta}_u -\beta_u$ and $\widehat{\beta}_v - \beta_v$.
+
+```{r}
+param_groups <- c("method", "epsy", "epsa", "betau", "betav", "d")
+ret[, bias_betau := (hbetau - betau)]
+ret[, bias_betau_median := median(bias_betau), by = param_groups]
+
+plot_boxplot(ret[betav == betavv], methods, value = "bias_betau",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             scale_y_transform = identity,
+             title = TeX("$\\widehat{\\beta}_u - \\beta_u$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "bias_betau_median",
+             ylim = c(-.1,.1),
+             gray = F)
+```
+
+
+```{r}
+ret[, bias_betav := (hbetav - betav)]
+ret[, bias_betav_median := median(bias_betav), by = param_groups]
+
+plot_boxplot(ret[betav == betavv], methods, value = "bias_betav",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             scale_y_transform = identity,
+             title = TeX("$\\widehat{\\beta}_v - \\beta_v$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "bias_betav_median",
+             ylim = c(-.1,.1),
+             gray = F)
+```
+
+## Inference property
+
+For the inference property, let $z_{1-\alpha/2}$ denote the $(1-\alpha/2)$-quantile of the standard normal distribution and we consider the following procedures to construct the confidence intervals (CIs) for the regression coefficient,
+{$CI_{\beta_u}$ and $CI_{\beta_v}$:}
+\begin{enumerate}
+	\item \textbf{Two-stage-{adhoc}}: 
+	$\hat\beta^{ts} \pm z_{1-\alpha/2} \hat\sigma^{OLS}(\hat\beta^{ts})$, where $\hat\beta^{ts}$ is the two-stage estimate of $\beta$ and $\hat\sigma^{OLS}(\hat\beta^{ts})$ is the standard error from OLS,  assuming $\hat{u}^{ts},\hat{v}^{ts}$ are fixed predictors;
+	\item \textbf{Two-stage-oracle}: 
+	$\hat\beta^{ts}  \pm z_{1-\alpha/2} \sigma(\hat\beta^{ts})$, where $\sigma(\hat\beta^{ts})$ is the standard error of $\hat\beta^{ts}$, whose mathematical expressions are given in Corollary 2 and the true parameters are plugged into those expressions;
+	\item \textbf{Two-stage}: 
+	$\hat\beta^{ts} \pm z_{1-\alpha/2} \hat\sigma(\hat\beta^{ts})$, where $\hat\sigma(\hat\beta^{ts})$ is the standard error of $\hat\beta^{ts}$ by plugging all the two-stage estimators into Corollary 2.
+	\item \textbf{SuperCENT-$\lambda_{0}$-oracle};
+	$\hat\beta^{\lambda_0} \pm z_{1-\alpha/2}  \sigma(\hat\beta^{\lambda_0})$, where $\hat\beta^{\lambda_0}$ is the estimate of $\beta$ by SuperCENT-$\lambda_{0}$ and $\sigma(\hat\beta^{\lambda_0})$ follows Corollary 5, with the true parameters plugged in;
+	\item \textbf{SuperCENT-$\hat\lambda_{cv}$}:
+	 $\hat\beta^{\hat{\lambda}_{cv}} \pm z_{1-\alpha/2} \hat\sigma(\hat\beta^{\hat{\lambda}_{cv}})$, where $\hat\beta^{\hat{\lambda}_{cv}}$ is the estimate of $\beta$ by SuperCENT-$\hat\lambda_{cv}$ and $\hat\sigma(\hat\beta^{\hat{\lambda}_{cv}})$ is obtained by plugging the SuperCENT-$\hat\lambda_{cv}$ estimates into Corollary 5.
+\end{enumerate}
+
+```{r}
+methods <- c("ols", # Two-stage-{adhoc}
+             "two_stage_oracle", # Two-stage-oracle
+             "two_stage", # Two-stage
+             "lr_oracle_oracle",  # SuperCENT-$\lambda_{0}$-oracle
+             "lr_cv" # SuperCENT-$\hat\lambda_{cv}$
+             )
+```
+
+### Coverage of $CI_{\beta_u}$ and  $CI_{\beta_v}$
+
+The following chunks produce the plots of the empirical coverage of the 95\% confidence interval for $\beta_u$ and $\beta_v$ respectively, i.e., $CP(CI_{\beta_u})$ and  $CP(CI_{\beta_v})$.
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "cov_u",
+          FUN = mean,
+          error_bar = F, 
+          scale_y_transform = I,
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("$CP(CI_{\\beta_u})$"),
+          # ylim = (.9,1),
+          width = fig_width, height = fig_height)
+```
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "cov_v",
+          FUN = mean,
+          error_bar = F, 
+          scale_y_transform = I,
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("$CP(CI_{\\beta_v})$"),
+          width = fig_width, height = fig_height)
+```
+
+
+### Width of $CI_{\beta_u}$ and  $CI_{\beta_v}$
+
+The following chunks produce the plots of the average of width of the 95\% confidence interval for $\beta_u$ and $\beta_v$ respectively, i.e., $Width(CI_{\beta_u})$ and  $Width(CI_{\beta_v})$.
+
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "width_u",
+          FUN = median,
+          error_bar = F, 
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Width($CI_{\\beta_u})$") ,
+          width = fig_width, height = fig_height)
+```
+
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "width_v",
+          FUN = median,
+          error_bar = F, 
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Width($CI_{\\beta_v})$") ,
+          width = fig_width, height = fig_height)
+```
+
+
+### Coverage of $CI_{a_{ij}}$
+
+```{r}
+methods <- c("two_stage_oracle", # Two-stage-oracle
+             "two_stage", # Two-stage
+             "lr_oracle_oracle",  # SuperCENT-$\lambda_{0}$-oracle
+             "lr_cv" # SuperCENT-$\hat\lambda_{cv}$
+             )
+```
+
+The following chunk produces the plots of the average empirical coverage of the 95\% confidence interval for each entry of $A_0$, i.e., $CP(CI_{a_{ij}})$.
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "cov_A",
+          FUN = mean,
+          error_bar = F, 
+          scale_y_transform = I,
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Average_{ij}($CP(CI_{a_{ij}}))$") ,
+          width = fig_width, height = fig_height,
+          ylim = c(.9, 1),
+          scales = "free")
+```
+
+
+### Width of $CI_{a_{ij}}$
+
+The following chunk produces the plots of the average width of the 95\% confidence interval for each entry of $A_0$, i.e., $Width(CI_{a_{ij}})$.
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "width_A",
+          FUN = median,
+          error_bar = F, 
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Average_{ij}($Width(CI_{a_{ij}}))$") ,
+          width = fig_width, height = fig_height)
+```
+
+
+# Inconsistent regime of two-stage
+
+This section is for the plots of the inconsistent regime of the two-stage procedure.
+
+```{r}
+params <- NULL
+params$job_id <- c(1741112, 1740961) # epsa: 1 2 3 4; epsy: -6 -5 -4 -3 -2 -1 0; betau: 0, 2, 4; betav: 0; xmat: c; n: 8
+params$job_name <- "confint"
+
+sim_setup <- read_setup(params = params)
+ret <- read_output(params = params)
+
+epsy_sel <- c(-4, -2, 0)
+epsa_sel <- c(0, 2)
+ret <- ret[log2(epsy) %in% epsy_sel & log2(epsa) %in% epsa_sel]
+sim_setup$epsys <- sim_setup$epsys[sim_setup$epsys %in% epsy_sel]
+sim_setup$epsas <- sim_setup$epsas[sim_setup$epsas %in% epsa_sel]
+
+betavv= 1
+save <- T
+
+fig_width <- 12
+fig_height <- 6
+```
+
+
+## Calculation of theoretical results
+
+```{r include=FALSE}
+theorectical_property(params = params)
+theo <- read_theorectical(params = params)
+theo <- unique(theo)
+setnames(theo, c("method", "lopt"), 
+         c("method_class", "lopt0"))
+theo[,beta0:=NULL]
+ret[, method_class := "two_stage"]
+ret[grepl("lr", method), method_class := "supercent"]
+ret <- merge(ret, theo,
+             by = c("method_class", "epsy", "epsa", "n", "betau", "betav", "d"),
+             all.x = T)
+```
+
+
+```{r}
+n <- 2^sim_setup$ns
+
+# u, v
+ret[, u := u^2]
+ret[, u_f := u_f/n]
+ret[, v := v^2]
+ret[, v_f := v_f/n]
+
+if("A2" %in% names(ret)) {
+  ret[, A_norm := A_err/A2]
+}
+if("A0_2" %in% names(ret)) {
+  ret[, A_norm := A_err/A0_2]
+}
+
+# beta
+ret[, rate_betau := (betau - betau_hat)^2/betau^2]
+ret[, rate_betav := (betav - betav_hat)^2/betav^2]
+```
+
+## Estimation property
+
+For the estimation accuracy, we compare the following procedures:
+\begin{enumerate}
+	\item \textbf{Two-stage}: the two-stage procedure as in Algorithm1;
+	\item \textbf{SuperCENT-$\lambda_0$}: SuperCENT Algorithm 2 with the optimal $\lambda_0 = n\sigma_y^2/\sigma_a^2$, where the true $\sigma_y,\sigma_a$ are used;
+	\item \textbf{SuperCENT-$\hat\lambda_0$}: SuperCENT with estimated tuning parameter $\hat\lambda_0 = n(\hat\sigma_y^{ts})^2/(\hat\sigma_a^{ts})^2$, where $(\hat\sigma_y^{ts})^2 = \frac{1}{n-p-2}\|\hat{y}^{ts}-y\|_2^2$ and $(\hat\sigma_a^{ts})^2 = \frac{1}{n^2} \|\hat{A}^{ts} - A_0\|_F^2$ are estimated from the two-stage procedure;
+	\item \textbf{SuperCENT-$\hat\lambda_{cv}$}: SuperCENT with tuning parameter $\hat\lambda_{cv}$ chosen by 10-fold {cross-validation}.
+\end{enumerate}
+
+```{r}
+methods <- c("two_stage", # two-stage
+             "lr_oracle", # SuperCENT-$\lambda_0$
+             "lr_plugin", # SuperCENT-$\hat\lambda_0$
+             "lr_cv"  # SuperCENT-$\hat\lambda_{cv}$
+)
+```
+
+### u and v
+
+The following chunks produce the plots of $l(\widehat{u}, u)$ and $l(\widehat{v}, v)$.
+
+```{r}
+plot_boxplot(ret[betav == betavv], methods, value = "u",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l(\\widehat{u}, u)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "u_0", 
+             gray = F
+             )
+```
+
+```{r}
+plot_boxplot(ret[betav == betavv], methods, value = "v",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l(\\widehat{v}, v)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "v_0", 
+             gray = F
+             )
+```
+
+### A 
+
+The following chunk produces the plot of $l(\widehat{A}, A_0)$.
+
+```{r}
+ret[, A_norm := A_err/A0_2]
+plot_boxplot(ret[betav == betavv], methods, value = "A_norm",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$ l (\\widehat{A}, A_0)$"), 
+             save = T, width = fig_width, height = fig_height,
+             value0 = "A_norm_0", 
+             gray = F
+             )
+```
+
+
+### $\beta_u$ and  $\beta_v$
+
+The following chunks produce the plots of $l (\widehat{\beta}_u, \beta_u)$ and $l (\widehat{\beta}_v, \beta_v)$.
+
+```{r}
+param_groups <- c("method", "epsy", "epsa", "betau", "betav", "d")
+ret[, rate_betau := (betau - hbetau)^2/betau^2]
+ret[, rate_betau_median := median(rate_betau), by = param_groups]
+scales_y <- list(
+  `0` = scale_y_continuous(limits = c(-7, -1)),
+  `2` = scale_y_continuous(limits = c(-5.5, -1.5))
+)
+
+plot_boxplot(ret[betav == betavv], methods, value = "rate_betau",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l (\\widehat{\\beta}_u, \\beta_u)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "rate_betau_median", 
+             y_scales = scales_y,
+             gray = F)
+```
+
+```{r}
+ret[, rate_betav := (betav - hbetav)^2/betav^2]
+ret[, rate_betav_median := median(rate_betav), by = param_groups]
+scales_y <- list(
+  `0` = scale_y_continuous(limits = c(-6, -1)),
+  `2` = scale_y_continuous(limits = c(-5.5, 1))
+)
+
+plot_boxplot(ret[betav == betavv], methods, value = "rate_betav",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             title = TeX("$l (\\widehat{\\beta}_v, \\beta_v)$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "rate_betav_median", 
+             y_scales = scales_y,
+             gray = F)
+```
+
+
+The following chunks produce the plots of $\widehat{\beta}_u -\beta_u$ and $\widehat{\beta}_v - \beta_v$.
+
+```{r}
+param_groups <- c("method", "epsy", "epsa", "betau", "betav", "d")
+ret[, bias_betau := (hbetau - betau)]
+ret[, bias_betau_median := median(bias_betau), by = param_groups]
+
+plot_boxplot(ret[betav == betavv], methods, value = "bias_betau",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             scale_y_transform = identity,
+             title = TeX("$\\widehat{\\beta}_u - \\beta_u$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "bias_betau_median",
+             # ylim = c(-.1,.1),
+             gray = F)
+```
+
+
+```{r}
+ret[, bias_betav := (hbetav - betav)]
+ret[, bias_betav_median := median(bias_betav), by = param_groups]
+
+plot_boxplot(ret[betav == betavv], methods, value = "bias_betav",
+             FUN = median,
+             vpanel = "betau",
+             hpanel = "epsa",
+             scale_y_transform = identity,
+             title = TeX("$\\widehat{\\beta}_v - \\beta_v$"),
+             save = T, width = fig_width, height = fig_height,
+             value0 = "bias_betav_median",
+             gray = F)
+```
+
+
+## Inference property
+
+This subsection is for the
+confidence intervals (CIs) for the regression coefficient,
+{$CI_{\beta_u}$ and $CI_{\beta_v}$.
+
+
+```{r}
+methods <- c("ols", # Two-stage-{adhoc}
+             "two_stage_oracle", # Two-stage-oracle
+             "two_stage", # Two-stage
+             "lr_oracle_oracle",  # SuperCENT-$\lambda_{0}$-oracle
+             "lr_cv" # SuperCENT-$\hat\lambda_{cv}$
+             )
+```
+
+### Coverage of $CI_{\beta_u}$ and  $CI_{\beta_v}$
+
+The following chunks produce the plots of the empirical coverage of the 95\% confidence interval for $\beta_u$ and $\beta_v$ respectively, i.e., $CP(CI_{\beta_u})$ and  $CP(CI_{\beta_v})$.
+
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "cov_u",
+          FUN = mean,
+          error_bar = F, 
+          scale_y_transform = I,
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("$CP(CI_{\\beta_u})$"),
+          width = fig_width, height = fig_height)
+```
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "cov_v",
+          FUN = mean,
+          error_bar = F, 
+          scale_y_transform = I,
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("$CP(CI_{\\beta_v})$"),
+          width = fig_width, height = fig_height)
+```
+
+
+
+### Width of $CI_{\beta_u}$ and  $CI_{\beta_v}$
+
+The following chunks produce the plots of the average of width of the 95\% confidence interval for $\beta_u$ and $\beta_v$ respectively, i.e., $Width(CI_{\beta_u})$ and  $Width(CI_{\beta_v})$.
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "width_u",
+          FUN = median,
+          error_bar = F, 
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Width($CI_{\\beta_u})$") ,
+          width = fig_width, height = fig_height)
+```
+
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "width_v",
+          FUN = median,
+          error_bar = F, 
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Width($CI_{\\beta_v}$)") ,
+          width = fig_width, height = fig_height)
+```
+
+
+### Coverage of $CI_{a_{ij}}$
+
+```{r}
+methods <- c("two_stage_oracle", # Two-stage-oracle
+             "two_stage", # Two-stage
+             "lr_oracle_oracle",  # SuperCENT-$\lambda_{0}$-oracle
+             "lr_cv" # SuperCENT-$\hat\lambda_{cv}$
+             )
+```
+
+The following chunk produces the plots of the average empirical coverage of the 95\% confidence interval for each entry of $A_0$, i.e., $CP(CI_{a_{ij}})$.
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "cov_A",
+          FUN = mean,
+          error_bar = F, 
+          scale_y_transform = I,
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Average_{ij}($CP(CI_{a_{ij}}))$") ,
+          width = fig_width, height = fig_height,
+          scales = "fixed")
+```
+
+### Width of $CI_{a_{ij}}$
+
+The following chunk produces the plots of the average width of the 95\% confidence interval for each entry of $A_0$, i.e., $Width(CI_{a_{ij}})$.
+
+```{r}
+plot_mean(ret[betav == betavv], methods, 
+          value = "width_A",
+          FUN = median,
+          error_bar = F, 
+          hpanel = "epsa",
+          vpanel = "betau",
+          save = save,
+          title = TeX("Average_{ij}($Width(CI_{a_{ij}}))$") ,
+          width = fig_width, height = fig_height)
+```
+

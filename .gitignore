@@ -1,0 +1,13 @@
+# Ignore everything in repository root 
+/*
+
+# Files to not ignore
+!/.gitignore
+!/SuperCENT_README.Rmd
+!/SuperCENT_README.pdf
+
+# Folder to not ignore
+!/.github/
+!/code/
+!/data_trade_premium/
+!/output_trade_premium/
