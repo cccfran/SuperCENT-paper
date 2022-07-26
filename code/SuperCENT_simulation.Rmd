@@ -11,7 +11,7 @@ editor_options:
 ```{r setup, include=FALSE}
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(data.table, matrixStats, dplyr, ggplot2, ggpubr,
-               grid, gridExtra, gtable, latex2exp, facetscales)
+               grid, gridExtra, gtable, latex2exp, facetscales, stringr)
 
 source("utils_sim.R")
 
@@ -19,7 +19,7 @@ sim_setup <- NULL
 fig_width <- 12
 fig_height <- 6
 
-knitr::opts_chunk$set(echo = F, fig.height = fig_height, fig.width = fig_width)
+knitr::opts_chunk$set(echo = F, cache = T, fig.height = fig_height, fig.width = fig_width)
 ```
 
 This file is produced by `SuperCENT_simulation.Rmd` which contains both codes to reproduce the simulation results in "Network Regression and Supervised Centrality Estimation" and the descriptions and instructions of the code chunks.
@@ -140,7 +140,7 @@ prow <- cowplot::plot_grid( p1 + theme(legend.position="none"),
            hjust = -4,
            nrow = 2
            )
-prow
+# prow
 # extract the legend from one of the plots
 # (clearly the whole thing only makes sense if all plots
 # have the same legend, so we can arbitrarily pick one.)
@@ -827,3 +827,339 @@ plot_mean(ret[betav == betavv], methods,
           width = fig_width, height = fig_height)
 ```
 
+
+
+# Rank-10 network example
+
+The section for the simulation results of the multi-rank unified framework with a rank-10 network.
+
+```{r}
+params <- NULL
+params$job_id <- c(1991982, 1745349) # r = 9
+params$job_name <- "confint"
+
+sim_setup <- read_setup(params = params)
+ret <- read_output(params = params)
+
+save <- T
+
+betavv <- 1
+
+ret <- ret[log2(epsa) >= 1]
+
+methods <- c("two_stage", "lr_oracle", "ols", "lr_oracle_oracle")
+ret <- ret[method %in% methods]
+epsa_sel <- seq(1, 5, .5)
+sim_setup$epsas <- sim_setup$epsas[sim_setup$epsas %in% epsa_sel]
+
+fig_width <- 8
+fig_height <- 12
+```
+
+
+## Four plots
+
+The following chunk produces the plot for the comparison between the two-stage and SuperCENT in terms of the estimations of $u$ and $\beta_u$ as well as the coverage probability and the width of $CI_{\beta_u}$ varying the network noise level $\sigma_a$ and the gap between the leading singular value and the non-leading ones.
+
+
+```{r fig.height=fig_height}
+epsyy <- -2
+dds <- c(0, 2^c(-1, -0.5))
+ret <- ret[betav == 1 & betau == 16 & log2(epsy) == epsyy]
+
+r <- length(strsplit(ret[1, ds], "_")[[1]])
+r_label <- TeX("$d_2=d_3=d_4$: ")
+if(r > 4) r_label <- TeX(paste0("$d_2=...$", "$= d_{", r, "}$: "))
+
+ret[, sinu := sqrt(u^2)  ] 
+ret[, dd := tstrsplit(ds, "_")[[2]]]
+ret[is.na(dd), dd := 0]
+ret[, bias_betau := (hbetau - betau)]
+
+
+size = .75
+xaxis = "epsa"
+FUN = mean
+x_lab_pre = "Network noise: "
+
+methods <- c("two_stage", "lr_oracle")
+labs_cols <- dplyr::inner_join(method_labels_tbl(gray = F), 
+                               data.table(method = methods),
+                               by = "method")
+
+labs_cols[grepl("lr", method), labels := "SuperCENT"]
+labs_cols[!grepl("lr", method), labels := "Two-stage"]
+labs_cols[method == "two_stage", cols := "#F8766D"]
+
+ret_sub <- ret
+ret_sub$method <- factor(ret$method, levels = labs_cols$method)
+
+x_breaks <- log2(unique(ret[[xaxis]]))
+x_breaks <- x_breaks[order(x_breaks)]
+x_breaks <- x_breaks[seq(1, length(x_breaks), 2)]
+
+# get title
+# if(is.null(title)) title <- value
+
+toLabel <- function(x) {
+  ifelse(x == 0, "0", TeX(paste0("$2^{", 
+                                 round(log2(as.numeric(x)), 1), "}$")) )
+}
+
+# p1
+value = "sinu"
+scale_y_transform = identity
+title = TeX("Estimation error of hub centrality $u$")
+
+p1 <- ret_sub[,
+    .(mean_ratio = (FUN(get(value), na.rm = T)),
+      sd_ratio = (sd(get(value), na.rm = T))), 
+    by=c("method", "epsy", "epsa", "betau", "betav", "d", "dd")][dd %in% dds & method %in% methods] %>%
+  ggplot(aes(x = log2(epsa), 
+             y = scale_y_transform(mean_ratio), 
+             group = interaction(method, dd), 
+             # fill = method,
+             col = method,
+             linetype =  dd, 
+             shape = method)) +
+  geom_line(size = size) +
+  xlab(TeX_label(xaxis, x_lab_pre)) +
+  scale_x_continuous(breaks = x_breaks) +
+  scale_color_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_fill_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_shape_manual(values = labs_cols$shapes, labels = labs_cols$labels) +
+  scale_linetype_manual(values = c("solid", "longdash", "dotted"),
+                        labels = toLabel
+                        ) +
+  ylab("") +
+  ggtitle(title) +
+  my_theme +
+  theme(legend.key.width = unit(2,"cm"),
+        legend.title = element_text(size = 14)) +
+  labs(linetype = r_label,
+       color = "Method: ") 
+  # facet_wrap(~dd)
+# p1 
+
+## p2
+value = "bias_betau"
+scale_y_transform = identity
+title = TeX("Estimation bias of hub effect $\\beta_u$")
+
+p2 <- ret_sub[,
+    .(mean_ratio = (FUN(get(value), na.rm = T)),
+      sd_ratio = (sd(get(value), na.rm = T))), 
+    by=c("method", "epsy", "epsa", "betau", "betav", "d", "dd")][dd %in% dds  & method %in% methods] %>%
+  ggplot(aes(x = log2(epsa), 
+             y = scale_y_transform(mean_ratio), 
+             group = interaction(method, dd), 
+             # fill = method,
+             col = method,
+             linetype =  dd, 
+             shape = method)) +
+  geom_line(size = size) +
+  xlab(TeX_label(xaxis, x_lab_pre)) +
+  scale_x_continuous(breaks = x_breaks) +
+  scale_color_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_fill_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_shape_manual(values = labs_cols$shapes, labels = labs_cols$labels) +
+  scale_linetype_manual(values = c("solid", "longdash", "dotted"),
+                        labels = toLabel
+                        ) +
+  ylab("") +
+  ggtitle(title) +
+  my_theme +
+  theme(legend.key.width = unit(2,"cm"),
+        legend.title = element_text(size = 14)) +
+  labs(linetype = r_label) 
+# p2 
+
+## p3
+methods <- c("ols", "lr_oracle_oracle")
+labs_cols <- dplyr::inner_join(method_labels_tbl(gray = F), 
+                               data.table(method = methods),
+                               by = "method")
+
+labs_cols[grepl("lr", method), labels := "SuperCENT"]
+labs_cols[!grepl("lr", method), labels := "Two-stage"]
+labs_cols[method == "two_stage", cols := "#F8766D"]
+
+ret_sub <- ret
+ret_sub$method <- factor(ret$method, levels = labs_cols$method)
+
+value = "cov_u"
+scale_y_transform = I
+title = TeX("Coverage probablity of $CI_{\\beta_u}$")
+
+p3 <- ret_sub[,
+    .(mean_ratio = (FUN(get(value), na.rm = T)),
+      sd_ratio = (sd(get(value), na.rm = T))), 
+    by=c("method", "epsy", "epsa", "betau", "betav", "d", "dd")][dd %in% dds  & method %in% methods] %>%
+  ggplot(aes(x = log2(epsa), 
+             y = scale_y_transform(mean_ratio), 
+             group = interaction(method, dd), 
+             # fill = method,
+             col = method,
+             linetype =  dd, 
+             shape = method)) +
+  geom_line(size = size) +
+  xlab(TeX_label(xaxis, x_lab_pre)) +
+  scale_x_continuous(breaks = x_breaks) +
+  scale_color_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_fill_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_shape_manual(values = labs_cols$shapes, labels = labs_cols$labels) +
+  scale_linetype_manual(values = c("solid", "longdash", "dotted"),
+                        labels = toLabel
+                        ) +
+  ylab("") +
+  ggtitle(title) +
+  my_theme +
+  theme(legend.key.width = unit(2,"cm"),
+        legend.title = element_text(size = 14)) +
+  labs(linetype = r_label)  + 
+  geom_hline(yintercept = 0.95, linetype = "dashed") + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1))
+# p3 
+
+## p4
+value = "width_u"
+FUN = median
+title = TeX("Width of $CI_{\\beta_u}$")
+
+p4 <- ret_sub[,
+    .(mean_ratio = (FUN(get(value), na.rm = T)),
+      sd_ratio = (sd(get(value), na.rm = T))), 
+    by=c("method", "epsy", "epsa", "betau", "betav", "d", "dd")][dd %in% dds  & method %in% methods] %>%
+  ggplot(aes(x = log2(epsa), 
+             y = scale_y_transform(mean_ratio), 
+             group = interaction(method, dd), 
+             # fill = method,
+             col = method,
+             linetype =  dd, 
+             shape = method)) +
+  geom_line(size = size) +
+  xlab(TeX_label(xaxis, x_lab_pre)) +
+  scale_x_continuous(breaks = x_breaks) +
+  scale_color_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_fill_manual(values = labs_cols$cols, labels = labs_cols$labels) +
+  # scale_shape_manual(values = labs_cols$shapes, labels = labs_cols$labels) +
+  scale_linetype_manual(values = c("solid", "longdash", "dotted"),
+                        labels = toLabel
+                        ) +
+  ylab("") +
+  ggtitle(title) +
+  my_theme +
+  theme(legend.key.width = unit(2,"cm"),
+        legend.title = element_text(size = 14)) +
+  labs(linetype = r_label) 
+# p4
+
+prow <- cowplot::plot_grid( p1 + theme(legend.position="none"),
+           p2 + theme(legend.position="none"),
+           p3 + theme(legend.position="none"),
+           p4 + theme(legend.position="none"),
+           align = 'vh',
+           labels = c("A", "B", "C", "D"),
+           hjust = -4,
+           nrow = 2
+)
+# prow
+# extract the legend from one of the plots
+# (clearly the whole thing only makes sense if all plots
+# have the same legend, so we can arbitrarily pick one.)
+legend_b <- cowplot::get_legend(
+  p1 + 
+    guides(color = guide_legend(nrow = 1))+ 
+    guides(colour = guide_legend(order = 1), 
+           linetype = guide_legend(order = 2)) +
+    theme(legend.position="bottom",
+          legend.box="vertical")
+)
+
+
+# add the legend underneath the row we made earlier. Give it 10% of the height
+# of one plot (via rel_heights).
+p <- cowplot::plot_grid( prow, legend_b, ncol = 1, rel_heights = c(1, .1))
+p
+
+ggsave(paste0("../output_simulation/plot/",
+              paste(sim_setup$job_id, collapse = "-"), "_epsy",
+              epsyy,
+              "_small_exmaple_rank_", r, ".pdf"), 
+       width = 12, height = 10)
+```
+
+
+## Top 20 singular values
+
+This section shows the top 20 squared singular values of the observed network adjacency matrix $A$ with fixed leading singular value $d_1=1$ for the noiseless component $A_0$, fixed noise level $\sigma_a = 2$ and various non-leading singular values for $A_0$.
+
+```{r}
+params <- NULL
+params$job_id <- c(1992036, 1991851) # r = 9
+params$job_name <- "confint"
+
+sim_setup <- read_setup(params = params)
+
+ret <- read_output(params = params)
+
+save <- T
+
+betavv <- 1
+
+# epsa_sel <- seq(1, 5, .25)
+ret <- ret[log2(epsa) >= 1]
+
+# methods <- c("two_stage", "lr_oracle", "ols", "lr_oracle_oracle")
+# ret <- ret[method %in% methods]
+# sim_setup$epsys <- sim_setup$epsys[sim_setup$epsys %in% epsy_sel]
+epsa_sel <- seq(1, 5, .5)
+sim_setup$epsas <- sim_setup$epsas[sim_setup$epsas %in% epsa_sel]
+dmax <- 20
+
+fig_width <- 8
+fig_height <- 12
+```
+
+```{r}
+ret[, n_test := NULL]
+ret[, observed_ratio := NULL]
+ret[ds!=1, dd := tstrsplit(ds, "_")[[2]]]
+ret[is.na(dd), dd := 0]
+
+r <- length(strsplit(ret[1, ds], "_")[[1]])
+
+ret_long <- melt(ret, id.vars = c("epsy", "epsa", "n", "d", "dd", "s"),
+                 measure = patterns("^d_hat"),
+                 variable.name = "d_hat")
+ret_long[, d_hat := str_replace(d_hat, "d_hat_", "")]
+```
+
+
+```{r}
+ret_sub <- ret_long[d_hat %in% 1:20 & log2(epsa) == 2][
+  , .(d2 = mean(value^2)), c("epsy", "epsa", "dd", "d_hat")]
+ret_sub[dd!=0, dd := round(log2(as.numeric(dd)), 2)]
+ret_sub[, dd := factor(dd, levels = c("0", "-1", "-0.5"))]
+
+levels(ret_sub$dd) <- c(`0` = TeX("0"),
+                        `-1.0` = TeX("$2^{-1}$"),
+                        `-0.5` = TeX("$2^{-0.5}$"))
+
+ret_sub %>%
+  ggplot(aes(x = as.numeric(d_hat), y = d2, group = epsa)) + 
+  geom_point() +
+  # geom_line() +
+  theme_bw() +
+  xlab("Number of components" ) + 
+  ylab(TeX(paste0("Top ", dmax, " squared singular values"))) +
+  # ggtitle("Production network") +
+  my_theme +
+  facet_wrap(~dd, labeller = label_parsed )
+
+ggsave(paste0("../output_simulation/plot/",
+              paste(sim_setup$job_id, collapse = "-"), "_epsy",
+              epsyy,
+              "_small_exmaple_rank_", r, "_d_hat.pdf"), 
+       width = 12, height = 3)
+```
