@@ -77,7 +77,7 @@ trade_raw <- fread("../data_trade_premium/trade_data_sub.csv")
 
 # Risk primium 
 
-The followng chunk produces Figure 11.
+The following chunk produces Figure 11.
 The figure shows the time series plot of the rank of the 5-year moving average of risk premium from 2003 to 2012 for the 24 countries/regions. 
 In each year, we rank the 24 countries/regions from 1 to 24
 from the largest risk premium to the smallest, i.e., in descending order of the risk premium.
@@ -137,7 +137,7 @@ We first run the two-stage and SuperCENT with 10-fold cross-validation on 1999-2
 Specifically, when considering 
 year $t$, all the relevant quantities are the averages from year $t-4$ to year $t$. 
 
-Following Richmand (2019) we define the trade linkage as the trade amount normalized by the pair-wise total GDP, which represents the relative trade (export/import) intensity between two countries. Specifically, the trade linkage between two countries is computed as
+Following Richmond (2019) we define the trade linkage as the trade amount normalized by the pair-wise total GDP, which represents the relative trade (export/import) intensity between two countries. Specifically, the trade linkage between two countries is computed as
 $$
 {a_{ijt}}
 = \frac{S_{ijt}}{GDP_{it} + GDP_{jt} },
